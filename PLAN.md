@@ -183,14 +183,14 @@ Opaque handles: `srhiDevice`, `srhiBuffer`, `srhiTexture`, `srhiTextureView`, `s
 | 1 Compiler, `.srhs`, `srhic` (+ `--header`) | Done |
 | 2 Metal 3 backend + test framework | Done: 46/46 tests |
 | 3 WebGPU backend (wgpu-native) | Done: 46/46 tests against the shared Metal goldens, no overrides |
-| 4 D3D11 backend | Written, **not yet built or run** (needs a Windows machine) |
-| 5 Swapchain / HDR / fullscreen / timestamps / native access | Done on Metal + WebGPU (HDR10 unsupported on WebGPU) |
+| 4 D3D11 backend | Done: 46/46 tests against the shared goldens with the debug layer on (Windows 11, RTX 3050); all examples verified. WebGPU (wgpu-native) also passes 46/46 on Windows |
+| 5 Swapchain / HDR / fullscreen / timestamps / native access | Done on Metal + WebGPU + D3D11 (HDR10 unsupported on WebGPU) |
 | 6 ImGui backend | Done (sRGB / scRGB / HDR10-aware) |
 | 7 Asset baker (`srhi_bake`, ANBC) | Done: Sponza, DamagedHelmet, lake_pier HDRI |
-| 8 Examples | HelloTriangle, Sprites2D, PBRHelmet (IBL), Bloom, ShadowMapping (CSM), Deferred: all verified on Metal + WebGPU |
-| 9 Web build | Not started: needs emsdk installed |
+| 8 Examples | HelloTriangle, Sprites2D, PBRHelmet (IBL), Bloom, ShadowMapping (CSM), Deferred: all verified on Metal + WebGPU + D3D11 |
+| 9 Web build | Builds with emsdk (`xmake f -p wasm`, emdawnwebgpu + Asyncify, assets fetched over HTTP); device creation works in Edge, **rendering not yet verified in a browser** |
 
 Follow-ups:
-- Run the D3D11 backend on Windows (`srhi_tests --backend d3d11`); the checklist is in the D3D11 agent report / commit notes.
 - `Model` has no CPU culling (Sponza: 448 draws per pass, 5.7M triangles); expose submesh bounds and cull per view/cascade.
-- Web build: install emsdk, add an `xmake f -p wasm` path (emdawnwebgpu, `-sASYNCIFY` for blocking waits).
+- Web build: verify every example in a browser (see the README's browser build section).
+- `dist/`: compile the single header's Metal section on a Mac.

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SimpleRHI example</title>
+    <style>
+        html, body { margin: 0; height: 100%; background: #16181d; color: #c9ced6; font: 14px/1.4 system-ui, sans-serif; }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        canvas { display: block; max-width: 100vw; max-height: calc(100vh - 2.5em); outline: none; }
+        #status { height: 2.5em; display: flex; align-items: center; padding: 0 1em; white-space: nowrap; overflow: hidden; }
+        #status.error { color: #ff8080; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+    <div id="status">Loading...</div>
+    <script>
+        var statusElement = document.getElementById('status');
+        function setStatus(text, isError) {
+            statusElement.textContent = text;
+            statusElement.className = isError ? 'error' : '';
+        }
+        var Module = {
+            canvas: document.getElementById('canvas'),
+            print: function (text) { console.log(text); setStatus(text, false); },
+            printErr: function (text) { console.error(text); setStatus(text, true); },
+            setStatus: function (text) { if (text) setStatus(text, false); },
+            onAbort: function (what) { setStatus('Aborted: ' + what, true); },
+        };
+        if (!navigator.gpu)
+            setStatus('WebGPU is not available in this browser.', true);
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

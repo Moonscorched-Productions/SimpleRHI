@@ -57,6 +57,14 @@ namespace
     constexpr uint32_t kMaxUavSlots = D3D11_PS_CS_UAV_REGISTER_COUNT;              // 8
     constexpr uint32_t kMaxSamplerSlots = D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT;   // 16
 
+    /// @brief Texel box for UpdateSubresource / CopySubresourceRegion. Block-compressed formats need the far
+    ///        edges on a block boundary, even for mips smaller than one block.
+    inline D3D11_BOX TexelBox(srhiFormat format, uint32_t x, uint32_t y, uint32_t z, uint32_t w, uint32_t h, uint32_t d)
+    {
+        const FormatInfo& info = GetFormatInfo(format);
+        return {x, y, z, UINT(AlignUp(x + w, info.blockWidth)), UINT(AlignUp(y + h, info.blockHeight)), z + d};
+    }
+
     std::wstring ToWide(const char* s)
     {
         if (!s || !*s)
@@ -81,8 +89,11 @@ namespace
 
     void SetName(ID3D11DeviceChild* obj, const char* name)
     {
-        if (obj && name && *name)
-            obj->SetPrivateData(WKPDID_D3DDebugObjectName, UINT(strlen(name)), name);
+        if (!obj || !name || !*name)
+            return;
+        // State objects are deduplicated by D3D11, so the object may already carry another label: clear it first.
+        obj->SetPrivateData(WKPDID_D3DDebugObjectName, 0, nullptr);
+        obj->SetPrivateData(WKPDID_D3DDebugObjectName, UINT(strlen(name)), name);
     }
 
     // =================================================================================================
@@ -699,11 +710,10 @@ namespace
         void WriteBufferNow(D3DBuffer* b, uint64_t offset, const void* data, uint64_t size)
         {
             if (b->isConstant) {
+                // Boxed updates of constant buffers are only legal with NO_OVERWRITE / DISCARD copy flags, neither
+                // of which is queue-ordered, so the whole buffer is re-uploaded from the shadow.
                 memcpy(b->shadow.data() + offset, data, size);
-                uint64_t begin = offset / 16 * 16;
-                uint64_t end = std::min<uint64_t>(AlignUp(offset + size, 16), b->shadow.size());
-                D3D11_BOX box = {UINT(begin), 0, 0, UINT(end), 1, 1};
-                ctx->UpdateSubresource1(b->buffer.Get(), 0, &box, b->shadow.data() + begin, 0, 0, 0);
+                ctx->UpdateSubresource(b->buffer.Get(), 0, nullptr, b->shadow.data(), 0, 0);
             } else {
                 D3D11_BOX box = {UINT(offset), 0, 0, UINT(offset + size), 1, 1};
                 ctx->UpdateSubresource1(b->buffer.Get(), 0, &box, data, 0, 0, 0);
@@ -964,7 +974,7 @@ namespace
         {
             D3DTexture* t = static_cast<D3DTexture*>(texture);
             bool is3D = t->desc.type == SRHI_TEXTURE_TYPE_3D;
-            D3D11_BOX box = {r.x, r.y, is3D ? r.z : 0, r.x + r.width, r.y + r.height, is3D ? r.z + r.depth : 1};
+            D3D11_BOX box = TexelBox(t->desc.format, r.x, r.y, is3D ? r.z : 0, r.width, r.height, is3D ? r.depth : 1);
             ctx->UpdateSubresource(t->resource.Get(), t->Subresource(mip, is3D ? 0 : layer), &box, data, bytesPerRow,
                                    bytesPerRow * rowsPerImage);
         }
@@ -2050,11 +2060,11 @@ namespace
             }
             const uint8_t* data = static_cast<const uint8_t*>(mapped.pData);
             if (t->desc.type == SRHI_TEXTURE_TYPE_3D) {
-                D3D11_BOX tb = {dst.x, dst.y, dst.z, dst.x + width, dst.y + height, dst.z + depth};
+                D3D11_BOX tb = TexelBox(t->desc.format, dst.x, dst.y, dst.z, width, height, depth);
                 r.ctx->UpdateSubresource(t->resource.Get(), t->Subresource(dst.mip, 0), &tb, data, src.bytesPerRow, UINT(bytesPerImage));
             } else {
                 for (uint32_t i = 0; i < depth; ++i) {
-                    D3D11_BOX tb = {dst.x, dst.y, 0, dst.x + width, dst.y + height, 1};
+                    D3D11_BOX tb = TexelBox(t->desc.format, dst.x, dst.y, 0, width, height, 1);
                     r.ctx->UpdateSubresource(t->resource.Get(), t->Subresource(dst.mip, dst.layer + i), &tb, data + bytesPerImage * i,
                                              src.bytesPerRow, UINT(bytesPerImage));
                 }
@@ -2074,15 +2084,17 @@ namespace
             bool fullOnly = GetFormatInfo(t->desc.format).depth; // depth copies cannot use a box
             uint32_t mw = MipDim(t->desc.width, src.mip), mh = MipDim(t->desc.height, src.mip);
             uint32_t sw = fullOnly ? mw : width, sh = fullOnly ? mh : height;
-            ComPtr<ID3D11Resource> staging = r.dev->CreateStagingTexture(t, sw, sh, depth);
+            const FormatInfo& info = GetFormatInfo(t->desc.format);
+            ComPtr<ID3D11Resource> staging =
+                r.dev->CreateStagingTexture(t, uint32_t(AlignUp(sw, info.blockWidth)), uint32_t(AlignUp(sh, info.blockHeight)), depth);
             if (!staging)
                 return;
             if (is3D) {
-                D3D11_BOX box = {src.x, src.y, src.z, src.x + width, src.y + height, src.z + depth};
+                D3D11_BOX box = TexelBox(t->desc.format, src.x, src.y, src.z, width, height, depth);
                 r.ctx->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, t->resource.Get(), t->Subresource(src.mip, 0), &box);
             } else {
                 for (uint32_t i = 0; i < depth; ++i) {
-                    D3D11_BOX box = {src.x, src.y, 0, src.x + width, src.y + height, 1};
+                    D3D11_BOX box = TexelBox(t->desc.format, src.x, src.y, 0, width, height, 1);
                     r.ctx->CopySubresourceRegion(staging.Get(), D3D11CalcSubresource(0, i, 1), 0, 0, 0, t->resource.Get(),
                                                  t->Subresource(src.mip, src.layer + i), fullOnly ? nullptr : &box);
                 }
@@ -2117,13 +2129,13 @@ namespace
             bool fullOnly = GetFormatInfo(s->desc.format).depth || s->desc.sampleCount > 1;
             bool s3D = s->desc.type == SRHI_TEXTURE_TYPE_3D, d3D = d->desc.type == SRHI_TEXTURE_TYPE_3D;
             if (s3D && d3D) {
-                D3D11_BOX box = {src.x, src.y, src.z, src.x + width, src.y + height, src.z + depth};
+                D3D11_BOX box = TexelBox(s->desc.format, src.x, src.y, src.z, width, height, depth);
                 r.ctx->CopySubresourceRegion(d->resource.Get(), d->Subresource(dst.mip, 0), dst.x, dst.y, dst.z, s->resource.Get(),
                                              s->Subresource(src.mip, 0), &box);
                 return;
             }
             for (uint32_t i = 0; i < depth; ++i) {
-                D3D11_BOX box = {src.x, src.y, s3D ? src.z + i : 0, src.x + width, src.y + height, s3D ? src.z + i + 1 : 1};
+                D3D11_BOX box = TexelBox(s->desc.format, src.x, src.y, s3D ? src.z + i : 0, width, height, 1);
                 r.ctx->CopySubresourceRegion(d->resource.Get(), d->Subresource(dst.mip, d3D ? 0 : dst.layer + i), fullOnly ? 0 : dst.x,
                                              fullOnly ? 0 : dst.y, d3D ? dst.z + i : 0, s->resource.Get(),
                                              s->Subresource(src.mip, s3D ? 0 : src.layer + i), fullOnly ? nullptr : &box);
@@ -2175,11 +2187,13 @@ namespace
         D3DTexture* t = static_cast<D3DTexture*>(texture);
         Record([t, mip, layer, callback, userData](Replay& r) {
             uint32_t w = MipDim(t->desc.width, mip), h = MipDim(t->desc.height, mip);
-            ComPtr<ID3D11Resource> staging = r.dev->CreateStagingTexture(t, w, h, 1);
+            const FormatInfo& info = GetFormatInfo(t->desc.format);
+            ComPtr<ID3D11Resource> staging =
+                r.dev->CreateStagingTexture(t, uint32_t(AlignUp(w, info.blockWidth)), uint32_t(AlignUp(h, info.blockHeight)), 1);
             if (!staging)
                 return;
             if (t->desc.type == SRHI_TEXTURE_TYPE_3D) {
-                D3D11_BOX box = {0, 0, layer, w, h, layer + 1};
+                D3D11_BOX box = TexelBox(t->desc.format, 0, 0, layer, w, h, 1);
                 r.ctx->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, t->resource.Get(), t->Subresource(mip, 0), &box);
             } else {
                 // Whole-subresource copy (no box): also valid for depth textures.
@@ -2562,9 +2576,9 @@ srhiDevice* srhiCreateDeviceD3D11(const srhiDeviceDesc& desc)
 
     D3D11_FEATURE_DATA_D3D11_OPTIONS options = {};
     d->device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof(options));
-    if (!options.ConstantBufferOffsetting || !options.MapNoOverwriteOnDynamicConstantBuffer || !options.ConstantBufferPartialUpdate) {
+    if (!options.ConstantBufferOffsetting || !options.MapNoOverwriteOnDynamicConstantBuffer) {
         srhi::Log(nullptr, SRHI_LOG_SEVERITY_ERROR,
-                  "D3D11: the driver lacks constant buffer offsetting / partial updates / no-overwrite maps (WDDM 1.2 required)");
+                  "D3D11: the driver lacks constant buffer offsetting / no-overwrite maps (WDDM 1.2 required)");
         delete d;
         return nullptr;
     }

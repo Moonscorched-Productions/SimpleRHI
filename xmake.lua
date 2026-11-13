@@ -23,12 +23,38 @@ option("webgpu")
     set_description("Build the WebGPU backend (wgpu-native on desktop, emdawnwebgpu on wasm)")
 option_end()
 
+add_requires("stb", "glm")
 if not is_plat("wasm") then
-    add_requires("libsdl3", "cgltf", "stb", "glm", "nlohmann_json")
+    add_requires("libsdl3", "cgltf", "nlohmann_json")
     add_requires("imgui v1.92.7-docking", { configs = { sdl3 = true } })
     if has_config("webgpu") then
         add_requires("wgpu-native")
     end
+end
+
+-- Browser build (xmake f -p wasm): WebGPU through emdawnwebgpu. Asyncify lets the blocking parts of the
+-- API (device creation, srhiDeviceWaitIdle) and the examples' main loop yield to the browser.
+--
+-- SDL3 comes from the Emscripten port, and ImGui is compiled from source against it (the xmake packages
+-- would build their own SDL3).
+if is_plat("wasm") then
+    package("imgui-source")
+        set_kind("library", { headeronly = true })
+        add_urls("https://github.com/ocornut/imgui.git")
+        add_versions("v1.92.7-docking", "v1.92.7-docking")
+        on_install(function (package)
+            os.cp("*.h", package:installdir("include"))
+            os.cp("*.cpp", package:installdir("src"))
+            os.cp("backends/imgui_impl_sdl3.h", package:installdir("include"))
+            os.cp("backends/imgui_impl_sdl3.cpp", package:installdir("src"))
+        end)
+    package_end()
+    add_requires("imgui-source v1.92.7-docking")
+
+    add_cxflags("--use-port=emdawnwebgpu", "--use-port=sdl3")
+    add_ldflags("--use-port=sdl3")
+    add_ldflags("--use-port=emdawnwebgpu", "-sASYNCIFY", "-sASYNCIFY_STACK_SIZE=65536", "-sALLOW_MEMORY_GROWTH",
+                "-sMAXIMUM_MEMORY=4GB", "-sSTACK_SIZE=1MB")
 end
 
 set_rundir("$(projectdir)")
@@ -94,11 +120,13 @@ if not is_plat("wasm") then
             add_frameworks("Metal", "Foundation")
         else
             add_files("Source/Tools/AssetBaker/anbc_impl.cpp")
+            set_languages("cxx20") -- anbc.h uses designated initializers
         end
     target_end()
 
     target("srhic")
         set_kind("binary")
+        set_policy("build.fence", true) -- shader rules run it, so it must be linked before dependents compile
         add_deps("SimpleRHICompiler")
         add_files("Source/Tools/ShaderCompiler/main.cpp")
     target_end()
@@ -122,20 +150,38 @@ end
 -- ImGui backend and examples
 -- =====================================================================================================
 
-if not is_plat("wasm") then
+do
     target("SimpleRHIImGui")
         set_kind("static")
         add_deps("SimpleRHI")
-        add_packages("imgui", { public = true })
         add_includedirs("Source/ImGui", { public = true })
         add_files("Source/ImGui/imgui_impl_srhi.cpp")
+        if is_plat("wasm") then
+            add_packages("imgui-source", { public = true })
+            on_load(function (target)
+                local pkg = target:pkg("imgui-source")
+                if pkg then
+                    target:add("files", path.join(pkg:installdir(), "src", "*.cpp"))
+                end
+            end)
+        else
+            add_packages("imgui", { public = true })
+        end
     target_end()
 
     target("ExamplesCommon")
         set_kind("static")
         add_deps("SimpleRHI", "SimpleRHIImGui")
-        add_packages("libsdl3", "imgui", "glm", "stb", "cgltf", { public = true })
+        add_packages("glm", "stb", { public = true })
+        if not is_plat("wasm") then
+            add_packages("libsdl3", "imgui", { public = true })
+        end
         add_files("Source/Examples/Common/*.cpp")
+        if is_plat("wasm") then
+            after_build(function ()
+                os.cp(path.join(os.projectdir(), "Source/Examples/Common/Index.html"), path.join(os.projectdir(), "build/web/index.html"))
+            end)
+        end
     target_end()
 
     for _, dir in ipairs(os.dirs(path.join(os.scriptdir(), "Source/Examples/*"))) do
@@ -144,9 +190,19 @@ if not is_plat("wasm") then
             target(name)
                 set_kind("binary")
                 set_group("Examples")
-                add_rules("srhi.shader")
-                add_deps("ExamplesCommon", "srhic")
-                add_files(path.join(dir, "*.cpp"), path.join(dir, "*.slang"))
+                add_deps("ExamplesCommon")
+                add_files(path.join(dir, "*.cpp"))
+                if is_plat("wasm") then
+                    -- Shader packages and baked assets come from a native build (Content/Cache) and are
+                    -- fetched over HTTP: serve the repository root and open /build/web/.
+                    set_targetdir("$(projectdir)/build/web")
+                    set_extension(".html")
+                    add_ldflags("--shell-file", path.join(os.scriptdir(), "Source/Examples/Common/Shell.html"), { force = true })
+                else
+                    add_rules("srhi.shader")
+                    add_deps("srhic")
+                    add_files(path.join(dir, "*.slang"))
+                end
             target_end()
         end
     end

@@ -23,10 +23,24 @@
     #include <emscripten/emscripten.h>
     #include <webgpu/webgpu.h>
     #define SRHI_WGPU_NATIVE 0
+    // emdawnwebgpu follows the newer webgpu.h: one timestamp-writes struct for both pass types.
+    typedef WGPUPassTimestampWrites WGPURenderPassTimestampWrites;
+    typedef WGPUPassTimestampWrites WGPUComputePassTimestampWrites;
+    #define WGPUDeviceLostReason_InstanceDropped WGPUDeviceLostReason_CallbackCancelled
 #else
     #include <webgpu/webgpu.h>
     #include <webgpu/wgpu.h>
     #define SRHI_WGPU_NATIVE 1
+#endif
+
+#if defined(_WIN32)
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <windows.h>
 #endif
 
 #include <algorithm>
@@ -1891,7 +1905,10 @@ struct VSOut { @builtin(position) position : vec4<f32>, @location(0) uv : vec2<f
         wgpuCommandBufferRelease(cb);
 
         for (WgpuSwapchain* sc : presents) {
+#if SRHI_WGPU_NATIVE
             wgpuSurfacePresent(sc->surface);
+#endif
+            // In the browser the canvas is presented when control returns to the event loop.
             sc->ReleaseImage();
         }
 
@@ -1900,7 +1917,11 @@ struct VSOut { @builtin(position) position : vec4<f32>, @location(0) uv : vec2<f
         f->userData = userData;
         WGPUQueueWorkDoneCallbackInfo done = {};
         done.mode = WGPUCallbackMode_AllowProcessEvents;
+#if SRHI_WGPU_NATIVE
         done.callback = [](WGPUQueueWorkDoneStatus, void* u1, void*) { static_cast<InFlight*>(u1)->done = true; };
+#else
+        done.callback = [](WGPUQueueWorkDoneStatus, WGPUStringView, void* u1, void*) { static_cast<InFlight*>(u1)->done = true; };
+#endif
         done.userdata1 = f;
         wgpuQueueOnSubmittedWorkDone(dev->queue, done);
         for (auto& r : f->readbacks) {

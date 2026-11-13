@@ -20,6 +20,10 @@
 #include <fstream>
 #include <thread>
 
+#if defined(__EMSCRIPTEN__)
+    #include <emscripten/emscripten.h>
+#endif
+
 namespace
 {
     constexpr uint32_t kMaxFramesInFlight = 2;
@@ -28,6 +32,22 @@ namespace
     {
         const char* tag = severity == SRHI_LOG_SEVERITY_ERROR ? "error" : severity == SRHI_LOG_SEVERITY_WARNING ? "warning" : "info";
         fprintf(stderr, "[SimpleRHI %s] %s\n", tag, message);
+    }
+
+#if defined(__EMSCRIPTEN__)
+    // The browser build runs the whole example as one Asyncify coroutine: the main loop stays a plain
+    // loop and yields to the browser once per frame (which is also when the canvas is presented).
+    EM_ASYNC_JS(void, WaitForAnimationFrame, (), { await new Promise(function(resolve) { requestAnimationFrame(resolve); }); });
+#endif
+
+    /// @brief Short wait while the GPU catches up; in the browser it must return to the event loop.
+    void IdleWait()
+    {
+#if defined(__EMSCRIPTEN__)
+        emscripten_sleep(1);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+#endif
     }
 
     const char* ColorSpaceName(srhiColorSpace cs)
@@ -42,11 +62,26 @@ namespace
 
 bool App::ReadFile(const std::string& path, std::vector<uint8_t>& out)
 {
-    std::ifstream file(path, std::ios::binary);
+#if defined(__EMSCRIPTEN__)
+    // Fetched from the web server on demand (paths are relative to the served repository root), so
+    // nothing is preloaded into the virtual file system.
+    void* data = nullptr;
+    int size = 0, error = 0;
+    emscripten_wget_data(("/" + path).c_str(), &data, &size, &error);
+    if (error || !data)
+        return false;
+    out.assign(static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
+    free(data);
+    return true;
+#else
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file)
         return false;
-    out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-    return true;
+    out.resize(size_t(file.tellg()));
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(out.data()), std::streamsize(out.size()));
+    return bool(file);
+#endif
 }
 
 srhiShaderModule* App::LoadShader(const char* name)
@@ -291,7 +326,7 @@ int App::Run(int argc, char** argv, const char* title)
         // Frame pacing: at most kMaxFramesInFlight command buffers queued on the GPU.
         srhiDevicePoll(mDevice);
         while (mFramesInFlight >= kMaxFramesInFlight) {
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            IdleWait();
             srhiDevicePoll(mDevice);
         }
 
@@ -308,7 +343,11 @@ int App::Run(int argc, char** argv, const char* title)
 
         srhiTexture* backbuffer = srhiSwapchainAcquire(mSwapchain);
         if (!backbuffer) {
+#if defined(__EMSCRIPTEN__)
+            WaitForAnimationFrame();
+#else
             SDL_Delay(16);
+#endif
             continue;
         }
 
@@ -359,6 +398,9 @@ int App::Run(int argc, char** argv, const char* title)
         if (lastFrame)
             srhiDeviceWaitIdle(mDevice); // fire the screenshot callback while `shot` is alive
         ++mFrameIndex;
+#if defined(__EMSCRIPTEN__)
+        WaitForAnimationFrame();
+#endif
     }
 
     srhiDeviceWaitIdle(mDevice);

@@ -55,12 +55,34 @@ Requires [xmake](https://xmake.io) and the [Slang](https://github.com/shader-sla
 wgpu-native) are fetched by xmake.
 
 ```sh
-xmake f -m release --webgpu=y
+xmake f -m release --webgpu=y         # Windows: add --slang_dir=C:/path/to/slang (slang.dll on PATH)
 xmake                        # runtime, compiler, tools, tests and examples
 xmake run srhi_bake          # compress Content/ into Content/Cache (ANBC: BC7/BC5/BC6H)
 xmake run srhi_tests         # --backend metal|d3d11|webgpu, --update-goldens, --filter <name>
 xmake run Sprites2D          # --backend ..., --hdr, --no-vsync
 ```
+
+### Browser build
+
+Build natively first (the browser pages load the shader packages and baked assets from `Content/Cache`),
+then configure for wasm with an [emsdk](https://emscripten.org) install:
+
+```sh
+xmake f -p wasm -m release --sdk=/path/to/emsdk
+xmake
+python3 -m http.server       # from the repository root, then open http://localhost:8000/build/web/
+```
+
+On Windows with a recent emsdk, also pass the tools explicitly (xmake looks for `emcc.bat`):
+`--cc=.../emcc.exe --cxx=.../em++.exe --ld=.../em++.exe --sh=.../em++.exe --ar=.../emar.exe`
+(all under `emsdk/upstream/emscripten`).
+
+### Drop-in distribution
+
+[dist/](dist/) is everything needed to use SimpleRHI in another project: a single-header `SimpleRHI.h`
+(API, runtime and shader compiler), a one-file `srhic.cpp`, the shader include, the ImGui backend, a minimal
+example with CMake and xmake build files, and Claude skills. See [dist/README.txt](dist/README.txt).
+Regenerate the generated files after changing the sources with `python Tools/MakeDist/make_dist.py`.
 
 Test results go to `Tests/Output/results.json`. To browse them with image diffs (NVIDIA FLIP), serve the
 repository root (`python3 -m http.server`) and open `/Tools/TestReport/`.
@@ -76,6 +98,8 @@ repository root (`python3 -m http.server`) and open `/Tools/TestReport/`.
 | `Source/Examples` | HelloTriangle, Sprites2D, PBRHelmet, Bloom, ShadowMapping, Deferred |
 | `Tests` | Golden-image / golden-buffer test suite |
 | `Tools/TestReport` | Web viewer for test results |
+| `Tools/MakeDist` | Generates the single-header distribution in `dist/` |
+| `dist` | Drop-in distribution: single header, `srhic.cpp`, example, Claude skills |
 
 ## Portability notes
 

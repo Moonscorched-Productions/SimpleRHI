@@ -6,25 +6,15 @@
 
 #include "Model.h"
 
+#include "App.h"
+
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 
 using namespace asset;
 
 namespace
 {
-    bool ReadAll(const std::string& path, std::vector<uint8_t>& out)
-    {
-        std::ifstream file(path, std::ios::binary | std::ios::ate);
-        if (!file)
-            return false;
-        out.resize(size_t(file.tellg()));
-        file.seekg(0);
-        file.read(reinterpret_cast<char*>(out.data()), std::streamsize(out.size()));
-        return bool(file);
-    }
-
     srhiTexture* SolidTexture(srhiDevice* device, uint8_t r, uint8_t g, uint8_t b, const char* label)
     {
         srhiTextureDesc desc = {};
@@ -49,7 +39,7 @@ srhiTexture* LoadBakedTexture(srhiDevice* device, const std::string& relativePat
 {
     std::vector<uint8_t> bytes;
     std::string path = "Content/Cache/Textures/" + relativePath;
-    if (!ReadAll(path, bytes) || bytes.size() < sizeof(SrtHeader)) {
+    if (!App::ReadFile(path, bytes) || bytes.size() < sizeof(SrtHeader)) {
         fprintf(stderr, "missing texture %s (run srhi_bake)\n", path.c_str());
         return nullptr;
     }
@@ -115,7 +105,7 @@ bool Model::Load(srhiDevice* device, const char* name, srhiResourceSetLayout* ma
     mDevice = device;
     std::vector<uint8_t> bytes;
     std::string path = std::string("Content/Cache/Models/") + name + ".srm";
-    if (!ReadAll(path, bytes) || bytes.size() < sizeof(SrmHeader)) {
+    if (!App::ReadFile(path, bytes) || bytes.size() < sizeof(SrmHeader)) {
         fprintf(stderr, "missing model %s (run srhi_bake)\n", path.c_str());
         return false;
     }

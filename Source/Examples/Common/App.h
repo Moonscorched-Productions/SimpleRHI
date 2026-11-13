@@ -44,6 +44,9 @@ public:
 
     int Run(int argc, char** argv, const char* title);
 
+    /// @brief Reads a whole file (fetched over HTTP in the browser). Returns false if missing.
+    static bool ReadFile(const std::string& path, std::vector<uint8_t>& out);
+
 protected:
     // --- Overridables ---------------------------------------------------------------------------------
 
@@ -63,8 +66,6 @@ protected:
 
     /// @brief Loads Content/Cache/Shaders/<name>.srhs (compiled at build time from the example's .slang).
     srhiShaderModule* LoadShader(const char* name);
-    /// @brief Reads a whole file. Returns false if missing.
-    static bool ReadFile(const std::string& path, std::vector<uint8_t>& out);
     srhiResourceSetLayout* LayoutFromShader(srhiShaderModule* module, uint32_t set);
     OutputParams GetOutputParams() const;
     srhiFormat BackbufferFormat() const { return srhiSwapchainGetFormat(mSwapchain); }
