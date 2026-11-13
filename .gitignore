@@ -1,0 +1,12 @@
+Build
+Cache
+.claude
+compile_commands.json
+.xmake
+.cache
+.xmake-webgpu/
+build-webgpu/
+build/
+Tests/Output*/
+imgui.ini
+.DS_Store
