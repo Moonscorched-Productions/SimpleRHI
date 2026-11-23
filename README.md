@@ -7,6 +7,10 @@ Shaders are written once in Slang (HLSL syntax) and compiled offline for every b
 It is the little sibling of AGFX: no bindless, ray tracing, mesh shaders or explicit barriers, just the
 features a 2D or small 3D game needs, with as little ceremony as possible.
 
+| Sprites2D | PBRHelmet | Deferred |
+|---|---|---|
+| ![Sprites2D example](.github/sprites.png) | ![PBRHelmet example](.github/helmet.png) | ![Deferred example](.github/deferred.png) |
+
 ## At a glance
 
 ```c
